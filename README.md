@@ -230,4 +230,4 @@ What I'd add for production:
 
 - All data is public-domain web research. No customer PII or proprietary data touches the LLM.
 - Kimi's web search tool respects robots.txt and returns snippets, not full page scrapes.
-- Rate limiting is enforced client-side (3 RPM) with exponential backoff on 429s.
+- Rate limiting is enforced client-side (20 RPM) with exponential backoff on 429s. Upgrade to higher tiers in Kimi to unlock higher rate limits (and hence quicker processing)!
