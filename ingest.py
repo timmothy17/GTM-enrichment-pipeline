@@ -33,7 +33,7 @@ def normalise_row(row):
     }
 
 def run_ingest():
-    df = pd.read_csv("test_leads_small.csv")
+    df = pd.read_csv("test_leads.csv")
     
     conn = get_connection()
     cur = conn.cursor()
