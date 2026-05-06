@@ -74,7 +74,7 @@ If hard filter triggered: final score = min(20, final score)
 
 ---
 
-## Smart Sync: Why last_synced_version Matters
+## Smart Sync
 
 A common mistake in enrichment-to-CRM pipelines is overwriting HubSpot records blindly or missing rescored data. This system uses version-aware syncing.
 
