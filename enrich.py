@@ -67,7 +67,7 @@ def get_active_scoring_weights(cur) -> Dict[str, int]:
         SELECT weights_json FROM scoring_weights 
         WHERE is_active = true 
         ORDER BY created_at DESC 
-        LIMIT 1
+        LIMIT %s
     """)
     row = cur.fetchone()
     if row and row["weights_json"]:
