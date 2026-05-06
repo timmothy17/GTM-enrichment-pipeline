@@ -57,19 +57,20 @@ Each signal is scored against strict anchors:
 
 Raw score = sum(signal_score * weight / 100)
 
-### Layer 3 — Timing Bonus (Additive, -10 to +10)
+### Layer 3 — Timing Multiplier (0.85x to 1.15x)
 
 Captures urgency without compressing the entire scale into the 90-100 band.
 
-| Bonus | Condition |
-|-------|-----------|
-| +10 | New CFO or COO hired in last 6 months |
-| +7  | Series B/C raised in last 12 months |
-| +5  | Active procurement/ops hiring right now |
-| 0   | No recent signals |
-| -10 | Layoffs or cost freeze detected |
+| Multiplier | Condition |
+|------------|-----------|
+| 1.15x | New CFO or COO hired in last 6 months |
+| 1.10x | Series B/C raised in last 12 months |
+| 1.05x | Active procurement/ops hiring right now |
+| 1.00x | No recent signals |
+| 0.85x | Layoffs or cost freeze detected |
 
-Final ICP score = min(100, max(0, raw_score + timing_bonus))
+Final ICP score = min(100, round(raw_score * timing_multiplier))
+If hard filter triggered: final score = min(20, final score)
 
 ---
 
