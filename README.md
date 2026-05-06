@@ -1,6 +1,6 @@
-# Omnea GTM Enrichment Engine
+# GTM Enrichment Engine
 
-A lightweight, LLM-powered company enrichment pipeline built for the GTM Systems Engineer interview at Omnea.
+A lightweight, LLM-powered company enrichment pipeline.
 
 The problem: SDRs spend hours researching prospects before they can write a personalized email. Existing tools (Clay, Apollo) charge per-credit and don't always surface procurement-specific signals.
 
