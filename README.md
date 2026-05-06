@@ -23,7 +23,7 @@ This solution: Ingest a list of target domains, run live web research via Kimi k
 
 ---
 
-## Three-Layer ICP Scoring
+## Three-Layer ICP Scoring For Procurement
 
 Most enrichment tools give you a black-box score. This system separates fit, readiness, and urgency.
 
@@ -115,6 +115,10 @@ Create a .env file:
     SUPABASE_CONNECTION_STRING=postgresql://postgres:[password]@db.[project].supabase.co:5432/postgres
     KIMI_API_KEY=sk-your-moonshot-key
     HUBSPOT_ACCESS_TOKEN=your-private-app-token
+
+### Note on Supabase Connection
+
+If you are on an IPv4 network (most home and office networks), use the Session Pooler connection string, not the Direct connection string. The direct connection requires IPv6 and will time out on standard networks.
 
 ### 2. Supabase Schema
 
