@@ -5,3 +5,4 @@ openai
 tabulate
 beautifulsoup4
 requests
+hubspot-api-client
