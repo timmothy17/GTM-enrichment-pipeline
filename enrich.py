@@ -292,13 +292,19 @@ Analyze this evidence and produce a comprehensive sales intelligence report usin
 ═══════════════════════════════════════════════════════════════════
 LAYER 1 — HARD FILTERS (Binary Disqualifiers)
 ═══════════════════════════════════════════════════════════════════
-Check these FIRST. If ANY trigger, set hard_filter_triggered = true.
-The final score will be capped at 20 regardless of other signals.
+If any trigger, the company is capped at 20/100.
 
 Hard filters:
-1. Has Coupa, SAP Ariba, or Zip already deployed → cap at 20
-2. Under 100 employees → cap at 20
+1. Has SAP Ariba deployed → cap at 20 (deeply embedded, not worth pursuing)
+2. Under 200 employees → cap at 20 (too small for enterprise procurement motion)
 3. Government or non-profit → cap at 20
+
+# Add competitive routing flags instead:
+competitive_flag options:
+- "none" → greenfield, Tier 1 priority
+- "zip" → rip and replace opportunity, Tier 1 with different sequence
+- "coupa" → long play, Tier 2
+- "ariba" → hard filter, cap at 20
 
 ═══════════════════════════════════════════════════════════════════
 LAYER 2 — WEIGHTED SIGNALS (0-100 per signal)
