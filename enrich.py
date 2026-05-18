@@ -406,7 +406,6 @@ def save_enrichment(cur, company_id: str, result: Dict, evidence: Dict,
     # Build the full score breakdown including hard filters, timing, and signals
     breakdown = result.get("icp_score_breakdown", {})
     
-    # Enrich the breakdown with the three-layer metadata at the same level
     full_breakdown = dict(breakdown)
     full_breakdown["hard_filter_triggered"] = result.get("hard_filter_triggered", False)
     full_breakdown["hard_filter_reason"] = result.get("hard_filter_reason", "")
@@ -429,6 +428,8 @@ def save_enrichment(cur, company_id: str, result: Dict, evidence: Dict,
             procurement_maturity = %s,
             decision_makers = %s,
             competitive_risk = %s,
+            competitive_routing = %s,
+            territory_tag = %s,
             
             hiring_procurement = %s,
             procurement_job_titles = %s,
@@ -463,6 +464,8 @@ def save_enrichment(cur, company_id: str, result: Dict, evidence: Dict,
             result.get("procurement_maturity"),
             json.dumps(result.get("decision_makers", [])),
             result.get("competitive_risk"),
+            result.get("competitive_routing", "none"),
+            result.get("territory_tag", "other"),
             
             result.get("hiring_procurement", False),
             json.dumps(result.get("procurement_job_titles", [])),
