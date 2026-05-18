@@ -114,6 +114,8 @@ def build_hubspot_properties(company: dict) -> dict:
         "news_buying_trigger": "yes" if company.get("news_buying_trigger") else "no",
         "enrichment_version": company.get("enrichment_version", 2),
         "enriched_at": to_hubspot_timestamp(company.get("website_enriched_at")),
+        "competitive_routing": company.get("competitive_routing", "none"),
+        "territory_tag": company.get("territory_tag", "other"),
     }
 
     # Add numberofemployees if we have it
