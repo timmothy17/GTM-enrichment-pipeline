@@ -350,6 +350,8 @@ Return STRICT JSON:
   "procurement_stack_detected": ["specific tools detected or empty list"],
   "procurement_maturity": "none|ad-hoc|emerging|mature",
   "competitive_risk": "None detected|Using [tool]|Mature procurement function",
+  "competitive_routing": "none|zip|coupa|ariba",
+  "territory_tag": "nordics|us|germany|uk|apac|other",
   
   "decision_makers": [
     {{
@@ -391,9 +393,7 @@ Return STRICT JSON:
   "icp_reasoning": "One paragraph explaining: (1) hard filter result, (2) signal strengths, (3) timing/urgency, and (4) why the final score is what it is",
   "recommended_outreach_angle": "One sentence hook for an SDR"
 }}
-
 Return JSON only."""
-
     raw, cost = kimi_web_search(system_prompt, user_prompt, max_tokens=2000)
     result = json.loads(raw)
     return result, cost
