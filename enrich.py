@@ -299,12 +299,10 @@ Hard filters:
 2. Under 200 employees → cap at 20 (too small for enterprise procurement motion)
 3. Government or non-profit → cap at 20
 
-# Add competitive routing flags instead:
-competitive_flag options:
-- "none" → greenfield, Tier 1 priority
-- "zip" → rip and replace opportunity, Tier 1 with different sequence
-- "coupa" → long play, Tier 2
-- "ariba" → hard filter, cap at 20
+NOT hard filters — route differently instead:
+- Zip detected → set competitive_routing = "zip", Tier 1 rip-and-replace opportunity, do NOT cap score
+- Coupa detected → set competitive_routing = "coupa", Tier 2 long play, apply 0.85x timing multiplier
+- No tool detected → set competitive_routing = "none", greenfield opportunity, score normally
 
 ═══════════════════════════════════════════════════════════════════
 LAYER 2 — WEIGHTED SIGNALS (0-100 per signal)
