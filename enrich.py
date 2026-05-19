@@ -67,7 +67,7 @@ def get_active_scoring_weights(cur) -> Dict[str, int]:
         SELECT weights_json FROM scoring_weights 
         WHERE is_active = true 
         ORDER BY created_at DESC 
-        LIMIT %s
+        LIMIT 1
     """)
     row = cur.fetchone()
     if row and row["weights_json"]:
@@ -511,7 +511,7 @@ def run_enrichment_v2(batch_size: int = 3):
         SELECT * FROM companies 
         WHERE enrichment_version < 2 OR enrichment_version IS NULL
         ORDER BY created_at
-        LIMIT 1
+        LIMIT %s
     """, (batch_size,))
     companies = cur.fetchall()
     total = len(companies)
