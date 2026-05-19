@@ -349,7 +349,7 @@ Return STRICT JSON:
   "procurement_maturity": "none|ad-hoc|emerging|mature",
   "competitive_risk": "None detected|Using [tool]|Mature procurement function",
   "competitive_routing": "none|zip|coupa|ariba",
-  "territory_tag": "nordics|us|germany|uk|apac|other",
+  "territory_tag": "nordics|us_west|us_east|us_midwest|us_south|germany|france|uk|benelux|apac|other",
   
   "decision_makers": [
     {{
