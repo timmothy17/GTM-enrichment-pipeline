@@ -3,6 +3,5 @@ pandas
 python-dotenv
 openai
 tabulate
-beautifulsoup4
-requests
 hubspot-api-client
+flask

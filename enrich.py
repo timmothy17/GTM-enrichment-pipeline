@@ -126,22 +126,34 @@ def log_enrichment(cur, company_id: str, enrichment_type: str,
 
 
 def kimi_web_search(system_prompt: str, user_prompt: str,
-                    max_tokens: int = 1200, max_retries: int = 3) -> Tuple[str, float]:
+                    max_tokens: int = 1200, max_retries: int = 3,
+                    use_web_search: bool = True) -> Tuple[str, float]:
+    """
+    Single Kimi call, optionally with the built-in web search tool attached.
+
+    Pass use_web_search=False for pure reasoning over evidence already in hand.
+    Attaching the tool lets the model issue (billable) searches it does not
+    need, so synthesis-style calls should leave it off.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
+
+    request_kwargs: Dict[str, Any] = {
+        "model": "kimi-k2.6",
+        "max_tokens": max_tokens,
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    if use_web_search:
+        request_kwargs["tools"] = WEB_SEARCH_TOOL
 
     for attempt in range(max_retries):
         rate_limiter.wait()
 
         try:
             completion = kimi.chat.completions.create(
-                model="kimi-k2.6",
-                max_tokens=max_tokens,
-                messages=messages,
-                extra_body={"thinking": {"type": "disabled"}},
-                tools=WEB_SEARCH_TOOL
+                messages=messages, **request_kwargs
             )
         except Exception as e:
             err_str = str(e)
@@ -157,6 +169,9 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
         search_count = 0
 
         while finish_reason == "tool_calls":
+            # reasoning_content has to be echoed back on the assistant turn.
+            # Moonshot rejects the follow-up request if it is dropped from the
+            # message history, so this is a protocol requirement, not caching.
             message_dict = {
                 "role": "assistant",
                 "content": choice.message.content or "",
@@ -175,6 +190,11 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
                     search_count += 1
                     query = tool_call_arguments.get("query", "unknown")
                     print(f"      🔍 Web search #{search_count}: {query[:60]}...")
+                    # $web_search is a builtin_function: Moonshot runs the
+                    # search server-side and injects the results itself. The
+                    # client's only job is to acknowledge the call by echoing
+                    # the arguments straight back as the tool result. This is
+                    # the documented contract, not an unimplemented stub.
                     tool_result = tool_call_arguments
                 else:
                     tool_result = f"Error: unknown tool '{tool_call_name}'"
@@ -189,11 +209,7 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
             rate_limiter.wait()
             try:
                 completion = kimi.chat.completions.create(
-                    model="kimi-k2.6",
-                    max_tokens=max_tokens,
-                    messages=messages,
-                    extra_body={"thinking": {"type": "disabled"}},
-                    tools=WEB_SEARCH_TOOL
+                    messages=messages, **request_kwargs
                 )
             except Exception as e:
                 err_str = str(e)
@@ -215,6 +231,8 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
                 lines = [l for l in lines if not l.strip().startswith("```")]
                 raw = "\n".join(lines).strip()
 
+            # Rough estimate only — a flat per-search rate, not token
+            # accounting. Real usage is on completion.usage and is ignored.
             estimated_cost = round(search_count * 0.005, 4)
             return raw, estimated_cost
 
@@ -392,7 +410,12 @@ Return STRICT JSON:
   "recommended_outreach_angle": "One sentence hook for an SDR"
 }}
 Return JSON only."""
-    raw, cost = kimi_web_search(system_prompt, user_prompt, max_tokens=2000)
+    # Synthesis reasons over evidence the module searches already gathered, so
+    # the web search tool is deliberately withheld here. Attaching it let the
+    # model fire extra billable searches that were never needed.
+    raw, cost = kimi_web_search(
+        system_prompt, user_prompt, max_tokens=2000, use_web_search=False
+    )
     result = json.loads(raw)
     return result, cost
 

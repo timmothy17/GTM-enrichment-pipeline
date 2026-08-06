@@ -6,6 +6,7 @@ Optionally fetches territory_tag via a single lightweight Kimi call.
 """
 
 import os
+import re
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -148,33 +149,32 @@ Return JSON only."""
         return "other"
 
 
+# Most disqualifying first. Ariba is a hard filter, Coupa is a long play, Zip
+# is a rip-and-replace target — so a stack containing both Ariba and Coupa must
+# route to Ariba regardless of the order the model happened to list them in.
+ROUTING_PRIORITY = ("ariba", "coupa", "zip")
+
+
 def derive_competitive_routing(procurement_stack: list) -> str:
     """
     Derives competitive_routing from existing procurement_stack_detected.
     No new API call needed — data already in raw_evidence.
     """
-    if not procurement_stack:
-        return "none"
-    
-    stack_lower = [s.lower() for s in procurement_stack]
-    
-    # Check in priority order
-    for tool in stack_lower:
-        if "ariba" in tool or "sap ariba" in tool:
-            return "ariba"
-        if "coupa" in tool:
-            return "coupa"
-        if "zip" in tool:
-            return "zip"
-    
+    stack_lower = [str(tool).lower() for tool in procurement_stack or []]
+
+    # Iterate priorities, not detected tools. Iterating tools returns whichever
+    # vendor appears first in the list rather than the one that matters most.
+    for routing in ROUTING_PRIORITY:
+        # Word-anchored: bare substring matching made "zip" hit any vendor
+        # whose name merely contains those letters (Zipline, Zipwhip, ...).
+        pattern = re.compile(rf"\b{routing}\b")
+        if any(pattern.search(tool) for tool in stack_lower):
+            return routing
+
     return "none"
 
 
-def rescore_company(
-    company: dict,
-    weights: Dict,
-    fetch_territory: bool = True
-) -> Tuple[Dict, float]:
+def rescore_company(company: dict, weights: Dict) -> Tuple[Dict, float]:
     """
     Re-score a company using stored raw_evidence.
     Only new API call is for territory_tag if missing.
@@ -184,7 +184,7 @@ def rescore_company(
     if isinstance(evidence, str):
         try:
             evidence = json.loads(evidence)
-        except:
+        except (json.JSONDecodeError, TypeError):
             evidence = {}
     
     evidence_json = json.dumps(evidence, indent=2)
@@ -362,14 +362,12 @@ def run_rescore(fetch_territory: bool = True):
         
         # Fetch territory if missing or unknown
         territory = company.get("territory_tag")
-        territory_cost = 0.0
-        
+
         if fetch_territory and (not territory or territory == "other"):
             print(f"  📍 Fetching territory tag...")
             territory = fetch_territory_tag(name, domain)
             print(f"  📍 Territory: {territory}")
-            territory_cost = 0.001  # Minimal cost, single search
-        
+
         try:
             result, _ = rescore_company(company, weights)
             

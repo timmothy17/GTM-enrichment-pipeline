@@ -11,7 +11,11 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from hubspot import HubSpot
-from hubspot.crm.companies import SimplePublicObjectInputForCreate
+from hubspot.crm.companies import (
+    PublicObjectSearchRequest,
+    SimplePublicObjectInput,
+    SimplePublicObjectInputForCreate,
+)
 from hubspot.crm.companies.exceptions import ApiException as CompaniesApiException
 
 load_dotenv()
@@ -54,8 +58,6 @@ def find_hubspot_company_by_domain(domain: str) -> str | None:
     Search HubSpot for an existing company by domain.
     Returns the HubSpot company ID if found, else None.
     """
-    from hubspot.crm.companies import PublicObjectSearchRequest
-
     request = PublicObjectSearchRequest(
         filter_groups=[{
             "filters": [{
@@ -87,7 +89,7 @@ def build_hubspot_properties(company: dict) -> dict:
     if isinstance(news, str):
         try:
             news = json.loads(news)
-        except:
+        except (json.JSONDecodeError, TypeError):
             news = {}
 
     dm = company.get("decision_makers") or []
@@ -154,11 +156,6 @@ def sync_company_to_hubspot(company: dict) -> str | None:
     """
     Upsert a company to HubSpot. Returns HubSpot company ID.
     """
-    from hubspot.crm.companies import (
-        SimplePublicObjectInputForCreate,
-        SimplePublicObjectInput
-    )
-
     domain = company.get("domain")
     if not domain:
         print("    No domain, skipping")
@@ -169,7 +166,7 @@ def sync_company_to_hubspot(company: dict) -> str | None:
 
     try:
         if hs_id:
-            response = hs.crm.companies.basic_api.update(
+            hs.crm.companies.basic_api.update(
                 company_id=hs_id,
                 simple_public_object_input=SimplePublicObjectInput(
                     properties=props
