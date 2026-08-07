@@ -28,20 +28,33 @@ from datetime import datetime, timezone
 load_dotenv()
 
 CONNECTION_STRING = os.getenv("SUPABASE_CONNECTION_STRING")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 client = OpenAI(
     api_key=os.getenv("KIMI_API_KEY"),
     base_url="https://api.moonshot.ai/v1"
 )
 
+# ============================================================================
+# SYNTHETIC DATA — NOT A REAL CALL
+#
+# The transcript below is entirely fabricated for demonstration purposes.
+# Contoso is a fictional company and every person, figure, funding event and
+# vendor relationship in it is invented. It is written against the reserved
+# example.com domain so it cannot be mistaken for a real account. Nothing
+# here originates from a real sales conversation or a real customer.
+# ============================================================================
+
+DEMO_COMPANY_DOMAIN = "contoso.example.com"
+DEMO_MEETING_ID = "demo_contoso_001"
+DEMO_REP_NAME = "Alex Rivera"
+
 SAMPLE_TRANSCRIPT = """
-Rep (Jamie, Omnea): Hey Marcus, really appreciate you making 
+Rep (Alex, Omnea): Hey Dana, really appreciate you making
 time — I know Q2 is always hectic on the finance side.
 
-Prospect (Marcus Webb, VP Finance, Synthesia): Ha, yeah tell 
-me about it. We've got board prep next week so the timing's 
-interesting but I figured a 30-minute break might actually 
+Prospect (Dana Reyes, VP Finance, Contoso): Ha, yeah tell
+me about it. We've got board prep next week so the timing's
+interesting but I figured a 30-minute break might actually
 do me good. How are things at Omnea?
 
 Rep: Going well, growing fast which brings its own chaos — 
@@ -96,7 +109,7 @@ there's always something more urgent.
 Rep: Has anything changed recently that's made it more 
 pressing?
 
-Prospect: Yeah actually — our new CFO Sarah joined about six 
+Prospect: Yeah actually — our new CFO Priya joined about six 
 weeks ago. She came from a company that had proper 
 procurement tooling in place and she's not happy with what 
 she walked into. She's already flagged it as something we 
@@ -115,8 +128,8 @@ Rep: That's a really common story with Coupa at your stage.
 What would light weight look like to her — is it about 
 the interface, the implementation timeline, the cost?
 
-Prospect: Probably all three honestly. And I'll be straight 
-with you Jamie — Sarah holds the budget quite tightly. 
+Prospect: Probably all three honestly. And I'll be straight
+with you Alex — Priya holds the budget quite tightly. 
 Anything new has to have a really clear business case. She's 
 going to want to see concrete numbers on what we're losing 
 through the current process and what the ROI looks like 
@@ -132,7 +145,7 @@ or auto-renewed without review. For a company your size
 that's usually a meaningful number.
 
 Prospect: Yeah that would actually be a more compelling 
-conversation to bring to Sarah than just a product demo. 
+conversation to bring to Priya than just a product demo. 
 She responds better to data.
 
 Rep: Exactly. Is it worth getting her on a call so we can 
@@ -153,14 +166,14 @@ there's something worth presenting it would need to be ready
 by then.
 
 Rep: That's really helpful framing. I'll send over some 
-availability for a three-way with Sarah and in the meantime 
+availability for a three-way with Priya and in the meantime 
 I'll put together a quick overview of how we'd approach the 
 spend analysis so she has something concrete to look at 
 before we speak.
 
-Prospect: Perfect. Good chat Jamie, looking forward to it.
+Prospect: Perfect. Good chat Alex, looking forward to it.
 
-Rep: Likewise, thanks Marcus. Speak soon.
+Rep: Likewise, thanks Dana. Speak soon.
 """
 
 
@@ -292,12 +305,12 @@ Analyse this call in full context. Return JSON only:
 {{
   "pain_points_identified": ["specific pain points mentioned"],
   "objections_raised": ["any objections or concerns raised"],
-  "champion_signals": ["behaviours suggesting Marcus will advocate internally"],
+  "champion_signals": ["behaviours suggesting the champion will advocate internally"],
   "economic_buyer_confirmed": true,
-  "economic_buyer_notes": "what we know about Sarah the CFO",
+  "economic_buyer_notes": "what we know about the economic buyer",
   "competitor_mentions": ["any competitors mentioned and context"],
   "deal_stage_assessment": "early|mid|late|stalled",
-  "recommended_outreach_angle": "one sentence hook for follow up email to Sarah",
+  "recommended_outreach_angle": "one sentence hook for the follow up email to the economic buyer",
   "recommended_next_steps": [
     "prioritised list of actions for the rep"
   ],
@@ -327,9 +340,20 @@ def store_call_record(
     territory: str,
     transcript: str,
     immediate_analysis: dict,
-    enriched_analysis: dict
+    enriched_analysis: dict = None,
+    meeting_id: str = DEMO_MEETING_ID,
+    duration_seconds: int = 847,
+    rep_name: str = DEMO_REP_NAME,
 ) -> str:
-    """Store the full call record in Supabase."""
+    """
+    Store the full call record in Supabase.
+
+    Meeting id, duration and rep default to the demo values so run_test() reads
+    cleanly, but post_call_webhook.py passes the real ones off the webhook
+    payload. enriched_analysis is None on the immediate pass; the 24h job fills
+    it in via the ON CONFLICT branch.
+    """
+    now = datetime.now(timezone.utc)
     cur.execute("""
         INSERT INTO call_records (
             company_id, contact_id, hubspot_company_id,
@@ -349,16 +373,16 @@ def store_call_record(
         company_id,
         contact_id,
         hubspot_company_id,
-        "demo_synthesia_001",
-        datetime.now(timezone.utc),
-        847,
-        "Jamie Chen",
+        meeting_id,
+        now,
+        duration_seconds,
+        rep_name,
         territory,
         transcript,
         json.dumps(immediate_analysis),
-        json.dumps(enriched_analysis),
-        datetime.now(timezone.utc),
-        datetime.now(timezone.utc)
+        json.dumps(enriched_analysis) if enriched_analysis else None,
+        now,
+        now if enriched_analysis else None
     ))
     return cur.fetchone()["id"]
 
@@ -391,9 +415,9 @@ def run_test():
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
     print("🔍 Step 1: Loading company context from Supabase...")
-    company = get_company_context(cur, "synthesia.io")
+    company = get_company_context(cur, DEMO_COMPANY_DOMAIN)
     if not company:
-        print("❌ Synthesia not found in Supabase. Run ingest + enrich first.")
+        print(f"❌ {DEMO_COMPANY_DOMAIN} not found in Supabase. Run ingest + enrich first.")
         return
     print(f"   ✅ Found: {company['name']} | ICP: {company['icp_score']}/100")
     

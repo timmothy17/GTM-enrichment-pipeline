@@ -1,7 +1,6 @@
 import os
 import pandas as pd
 import psycopg2
-from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -41,6 +40,7 @@ def run_ingest():
     companies_inserted = 0
     companies_skipped = 0
     contacts_inserted = 0
+    contacts_skipped = 0
 
     for _, row in df.iterrows():
         data = normalise_row(row)
@@ -82,21 +82,48 @@ def run_ingest():
         ])
 
         if has_contact:
-            cur.execute(
-                """
-                INSERT INTO contacts 
-                  (company_id, first_name, last_name, email, job_title)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (
-                    company_id,
-                    data["first_name"] or None,
-                    data["last_name"] or None,
-                    data["email"] or None,
-                    data["job_title"] or None
+            # Companies were deduped above but contacts were not, so re-running
+            # the same CSV used to insert a duplicate contact row every time.
+            # Match on email where we have one, otherwise on name within the
+            # company.
+            if data["email"]:
+                cur.execute(
+                    "SELECT id FROM contacts WHERE email = %s",
+                    (data["email"],)
                 )
-            )
-            contacts_inserted += 1
+            else:
+                cur.execute(
+                    """
+                    SELECT id FROM contacts
+                    WHERE company_id = %s
+                      AND first_name IS NOT DISTINCT FROM %s
+                      AND last_name IS NOT DISTINCT FROM %s
+                    """,
+                    (
+                        company_id,
+                        data["first_name"] or None,
+                        data["last_name"] or None
+                    )
+                )
+
+            if cur.fetchone():
+                contacts_skipped += 1
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO contacts
+                      (company_id, first_name, last_name, email, job_title)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        company_id,
+                        data["first_name"] or None,
+                        data["last_name"] or None,
+                        data["email"] or None,
+                        data["job_title"] or None
+                    )
+                )
+                contacts_inserted += 1
 
     conn.commit()
     cur.close()
@@ -106,6 +133,7 @@ def run_ingest():
     print(f"Companies inserted: {companies_inserted}")
     print(f"Companies skipped: {companies_skipped}")
     print(f"Contacts inserted: {contacts_inserted}")
+    print(f"Contacts skipped: {contacts_skipped}")
 
 if __name__ == "__main__":
     run_ingest()

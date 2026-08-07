@@ -1,19 +1,28 @@
 """
 rescore.py
 Re-score enriched companies using stored raw_evidence.
-No web searches — uses existing data with updated scoring logic.
-Optionally fetches territory_tag via a single lightweight Kimi call.
+
+The rescore itself makes no research searches — it replays evidence already in
+the database through the current scoring rubric, so it is cheap to run
+repeatedly while iterating on the model.
+
+Territory backfill is opt-in via fetch_territory=True and is NOT free: it calls
+Kimi with the web search tool attached, costing one search per company that
+lacks a tag. It defaults to False so that the zero-cost path stays the default.
 """
 
 import os
+import re
 import json
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from openai import OpenAI
 from dotenv import load_dotenv
 from tabulate import tabulate
 from typing import Dict, Tuple
-import time
+
+from scoring_rubric import build_scoring_rubric, RESPONSE_SCHEMA
 
 load_dotenv()
 
@@ -148,33 +157,32 @@ Return JSON only."""
         return "other"
 
 
+# Most disqualifying first. Ariba is a hard filter, Coupa is a long play, Zip
+# is a rip-and-replace target — so a stack containing both Ariba and Coupa must
+# route to Ariba regardless of the order the model happened to list them in.
+ROUTING_PRIORITY = ("ariba", "coupa", "zip")
+
+
 def derive_competitive_routing(procurement_stack: list) -> str:
     """
     Derives competitive_routing from existing procurement_stack_detected.
     No new API call needed — data already in raw_evidence.
     """
-    if not procurement_stack:
-        return "none"
-    
-    stack_lower = [s.lower() for s in procurement_stack]
-    
-    # Check in priority order
-    for tool in stack_lower:
-        if "ariba" in tool or "sap ariba" in tool:
-            return "ariba"
-        if "coupa" in tool:
-            return "coupa"
-        if "zip" in tool:
-            return "zip"
-    
+    stack_lower = [str(tool).lower() for tool in procurement_stack or []]
+
+    # Iterate priorities, not detected tools. Iterating tools returns whichever
+    # vendor appears first in the list rather than the one that matters most.
+    for routing in ROUTING_PRIORITY:
+        # Word-anchored: bare substring matching made "zip" hit any vendor
+        # whose name merely contains those letters (Zipline, Zipwhip, ...).
+        pattern = re.compile(rf"\b{routing}\b")
+        if any(pattern.search(tool) for tool in stack_lower):
+            return routing
+
     return "none"
 
 
-def rescore_company(
-    company: dict,
-    weights: Dict,
-    fetch_territory: bool = True
-) -> Tuple[Dict, float]:
+def rescore_company(company: dict, weights: Dict) -> Tuple[Dict, float]:
     """
     Re-score a company using stored raw_evidence.
     Only new API call is for territory_tag if missing.
@@ -184,7 +192,7 @@ def rescore_company(
     if isinstance(evidence, str):
         try:
             evidence = json.loads(evidence)
-        except:
+        except (json.JSONDecodeError, TypeError):
             evidence = {}
     
     evidence_json = json.dumps(evidence, indent=2)
@@ -204,104 +212,9 @@ Stored evidence:
 
 Apply the THREE-LAYER scoring system:
 
-═══════════════════════════════════════════════════════════════
-LAYER 1 — HARD FILTERS
-═══════════════════════════════════════════════════════════════
-Cap at 20/100 if ANY of these trigger:
-1. SAP Ariba deployed → hard filter, set competitive_routing = "ariba"
-2. Under 200 employees → too small for enterprise motion
-3. Government or non-profit → different buying motion
+{build_scoring_rubric(weights)}
 
-NOT hard filters — route differently:
-- Zip detected → competitive_routing = "zip", Tier 1 rip-and-replace, do NOT cap
-- Coupa detected → competitive_routing = "coupa", Tier 2 long play, apply 0.90x timing
-- No tool → competitive_routing = "none", greenfield, score normally
-
-═══════════════════════════════════════════════════════════════
-LAYER 2 — WEIGHTED SIGNALS
-═══════════════════════════════════════════════════════════════
-Weights:
-{json.dumps(weights, indent=2)}
-
-Score each signal 0-100:
-- 90-100 = Exceptional, clear evidence
-- 70-89  = Strong evidence, minor ambiguity
-- 50-69  = Moderate, partial or inferred
-- 30-49  = Weak, mentioned in passing
-- 0-29   = No evidence or contradicts signal
-
-raw_score = sum(signal_score * weight / 100)
-
-IMPORTANT: heavily favour companies with 1000+ employees.
-Omnea's growth unlock was enterprise, not mid-market.
-
-═══════════════════════════════════════════════════════════════
-LAYER 3 — TIMING MULTIPLIER
-═══════════════════════════════════════════════════════════════
-1.15x → New CFO or COO hired in last 6 months
-1.10x → Series B or C raised in last 12 months
-1.05x → Active procurement/ops hiring right now
-1.00x → No recent signals
-0.90x → Coupa detected (long play, harder sell)
-0.85x → Layoffs or cost freeze
-
-final_score = min(100, round(raw_score * timing_multiplier))
-If hard_filter_triggered: final_score = min(20, final_score)
-
-Return STRICT JSON:
-{{
-  "description": "One sentence on what the company does",
-  "target_customer": "SMB|mid-market|enterprise|mixed",
-  "pain_points": ["up to 5 business problems"],
-  "tech_mentions": ["technologies mentioned"],
-  "complexity_signals": ["signals of operational complexity"],
-  
-  "procurement_stack_detected": ["specific tools detected or empty list"],
-  "procurement_maturity": "none|ad-hoc|emerging|mature",
-  "competitive_risk": "None detected|Using [tool]|Mature procurement function",
-  "competitive_routing": "none|zip|coupa|ariba",
-  
-  "decision_makers": [
-    {{
-      "role": "CFO|COO|VP Finance|Head of Procurement|CEO",
-      "detected": true,
-      "evidence": "What research says about this role",
-      "hiring_status": "actively_hiring|stable|recently_hired|unknown"
-    }}
-  ],
-  
-  "hiring_procurement": true,
-  "procurement_job_titles": ["relevant job titles found"],
-  "procurement_job_count": 0,
-  "hiring_signal_strength": "none|low|medium|high",
-  
-  "news_buying_trigger": true,
-  "news_buying_trigger_reason": "One sentence on strongest trigger",
-  "key_news_item": "Most relevant headline",
-  "funding_stage": "seed|series-a|series-b|series-c|growth|public|bootstrapped|unknown",
-  "last_funding_amount": "amount or unknown",
-  "last_funding_date": "date or unknown",
-  "estimated_employee_count": null,
-  "growth_signals": ["list of growth indicators"],
-  
-  "hard_filter_triggered": false,
-  "hard_filter_reason": "Which hard filter triggered, or 'None'",
-  "timing_multiplier": 1.0,
-  "timing_multiplier_reason": "Why this multiplier was chosen",
-  "raw_score": 0,
-  "icp_score": 0,
-  "icp_score_breakdown": {{
-    "no_procurement_tool": {{"score": 0, "reasoning": ""}},
-    "procurement_hiring": {{"score": 0, "reasoning": ""}},
-    "headcount_growth": {{"score": 0, "reasoning": ""}},
-    "recent_funding": {{"score": 0, "reasoning": ""}},
-    "finance_coo_hiring": {{"score": 0, "reasoning": ""}},
-    "global_regulated_complex": {{"score": 0, "reasoning": ""}}
-  }},
-  "icp_reasoning": "One paragraph: (1) hard filter result, (2) signal strengths, (3) timing/urgency, (4) why the final score is what it is",
-  "recommended_outreach_angle": "One sentence hook for an SDR"
-}}
-Return JSON only."""
+{RESPONSE_SCHEMA}"""
 
     completion = kimi.chat.completions.create(
         model="kimi-k2.6",
@@ -327,7 +240,7 @@ Return JSON only."""
     return result, 0.0  # No search cost
 
 
-def run_rescore(fetch_territory: bool = True):
+def run_rescore(fetch_territory: bool = False):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
@@ -362,14 +275,12 @@ def run_rescore(fetch_territory: bool = True):
         
         # Fetch territory if missing or unknown
         territory = company.get("territory_tag")
-        territory_cost = 0.0
-        
+
         if fetch_territory and (not territory or territory == "other"):
             print(f"  📍 Fetching territory tag...")
             territory = fetch_territory_tag(name, domain)
             print(f"  📍 Territory: {territory}")
-            territory_cost = 0.001  # Minimal cost, single search
-        
+
         try:
             result, _ = rescore_company(company, weights)
             
@@ -492,4 +403,6 @@ def run_rescore(fetch_territory: bool = True):
 
 
 if __name__ == "__main__":
-    run_rescore(fetch_territory=True)
+    # Territory backfill costs one web search per untagged company. Flip to
+    # True when you want it; the default keeps a rescore free.
+    run_rescore(fetch_territory=False)

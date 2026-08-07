@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from tabulate import tabulate
 from typing import Dict, List, Tuple, Any
 
+from scoring_rubric import build_scoring_rubric, RESPONSE_SCHEMA
+
 load_dotenv()
 
 CONNECTION_STRING = os.getenv("SUPABASE_CONNECTION_STRING")
@@ -126,22 +128,34 @@ def log_enrichment(cur, company_id: str, enrichment_type: str,
 
 
 def kimi_web_search(system_prompt: str, user_prompt: str,
-                    max_tokens: int = 1200, max_retries: int = 3) -> Tuple[str, float]:
+                    max_tokens: int = 1200, max_retries: int = 3,
+                    use_web_search: bool = True) -> Tuple[str, float]:
+    """
+    Single Kimi call, optionally with the built-in web search tool attached.
+
+    Pass use_web_search=False for pure reasoning over evidence already in hand.
+    Attaching the tool lets the model issue (billable) searches it does not
+    need, so synthesis-style calls should leave it off.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
+
+    request_kwargs: Dict[str, Any] = {
+        "model": "kimi-k2.6",
+        "max_tokens": max_tokens,
+        "extra_body": {"thinking": {"type": "disabled"}},
+    }
+    if use_web_search:
+        request_kwargs["tools"] = WEB_SEARCH_TOOL
 
     for attempt in range(max_retries):
         rate_limiter.wait()
 
         try:
             completion = kimi.chat.completions.create(
-                model="kimi-k2.6",
-                max_tokens=max_tokens,
-                messages=messages,
-                extra_body={"thinking": {"type": "disabled"}},
-                tools=WEB_SEARCH_TOOL
+                messages=messages, **request_kwargs
             )
         except Exception as e:
             err_str = str(e)
@@ -157,6 +171,9 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
         search_count = 0
 
         while finish_reason == "tool_calls":
+            # reasoning_content has to be echoed back on the assistant turn.
+            # Moonshot rejects the follow-up request if it is dropped from the
+            # message history, so this is a protocol requirement, not caching.
             message_dict = {
                 "role": "assistant",
                 "content": choice.message.content or "",
@@ -175,6 +192,11 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
                     search_count += 1
                     query = tool_call_arguments.get("query", "unknown")
                     print(f"      🔍 Web search #{search_count}: {query[:60]}...")
+                    # $web_search is a builtin_function: Moonshot runs the
+                    # search server-side and injects the results itself. The
+                    # client's only job is to acknowledge the call by echoing
+                    # the arguments straight back as the tool result. This is
+                    # the documented contract, not an unimplemented stub.
                     tool_result = tool_call_arguments
                 else:
                     tool_result = f"Error: unknown tool '{tool_call_name}'"
@@ -189,11 +211,7 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
             rate_limiter.wait()
             try:
                 completion = kimi.chat.completions.create(
-                    model="kimi-k2.6",
-                    max_tokens=max_tokens,
-                    messages=messages,
-                    extra_body={"thinking": {"type": "disabled"}},
-                    tools=WEB_SEARCH_TOOL
+                    messages=messages, **request_kwargs
                 )
             except Exception as e:
                 err_str = str(e)
@@ -215,6 +233,8 @@ def kimi_web_search(system_prompt: str, user_prompt: str,
                 lines = [l for l in lines if not l.strip().startswith("```")]
                 raw = "\n".join(lines).strip()
 
+            # Rough estimate only — a flat per-search rate, not token
+            # accounting. Real usage is on completion.usage and is ignored.
             estimated_cost = round(search_count * 0.005, 4)
             return raw, estimated_cost
 
@@ -289,110 +309,15 @@ Raw evidence from 5 research modules:
 
 Analyze this evidence and produce a comprehensive sales intelligence report using the THREE-LAYER scoring system below.
 
-═══════════════════════════════════════════════════════════════════
-LAYER 1 — HARD FILTERS (Binary Disqualifiers)
-═══════════════════════════════════════════════════════════════════
-If any trigger, the company is capped at 20/100.
+{build_scoring_rubric(weights)}
 
-Hard filters:
-1. Has SAP Ariba deployed → cap at 20 (deeply embedded, not worth pursuing)
-2. Under 200 employees → cap at 20 (too small for enterprise procurement motion)
-3. Government or non-profit → cap at 20
-
-NOT hard filters — route differently instead:
-- Zip detected → set competitive_routing = "zip", Tier 1 rip-and-replace opportunity, do NOT cap score
-- Coupa detected → set competitive_routing = "coupa", Tier 2 long play, apply 0.85x timing multiplier
-- No tool detected → set competitive_routing = "none", greenfield opportunity, score normally
-
-═══════════════════════════════════════════════════════════════════
-LAYER 2 — WEIGHTED SIGNALS (0-100 per signal)
-═══════════════════════════════════════════════════════════════════
-Use these exact weights:
-{json.dumps(weights, indent=2)}
-
-Compute: raw_score = sum(signal_score * weight / 100)
-
-Rules:
-- no_procurement_tool = POSITIVE for Omnea. No tool detected = high score (greenfield)
-- procurement_hiring = actively building the function = high score
-- headcount_growth = fast growth without procurement tooling = high score
-- recent_funding = fresh capital creates budget + scaling pressure = high score
-- finance_coo_hiring = new execs trigger tooling reviews = high score
-- global_regulated_complex = multi-jurisdiction / compliance = high score
-
-═══════════════════════════════════════════════════════════════════
-LAYER 3 — TIMING MULTIPLIER (0.7x to 1.3x)
-═══════════════════════════════════════════════════════════════════
-Apply AFTER raw_score to capture urgency:
-
-1.3x → New CFO or COO hired in last 6 months (new finance leader = tooling review)
-1.2x → Series B or C raised in last 12 months (fresh capital, scaling pressure)
-1.1x → Active procurement/ops hiring RIGHT NOW
-0.9x → No recent news, stable, no hiring signals (latent need, low urgency)
-0.7x → Layoffs or cost freeze signals (budget contraction)
-
-Compute: final_score = min(100, round(raw_score * timing_multiplier))
-If hard_filter_triggered: final_score = min(20, final_score)
-
-═══════════════════════════════════════════════════════════════════
-
-Return STRICT JSON:
-
-{{
-  "description": "One sentence on what the company does",
-  "target_customer": "SMB|mid-market|enterprise|mixed",
-  "pain_points": ["up to 5 business problems"],
-  "tech_mentions": ["technologies mentioned"],
-  "complexity_signals": ["signals of operational complexity"],
-  
-  "procurement_stack_detected": ["specific tools detected or empty list"],
-  "procurement_maturity": "none|ad-hoc|emerging|mature",
-  "competitive_risk": "None detected|Using [tool]|Mature procurement function",
-  "competitive_routing": "none|zip|coupa|ariba",
-  "territory_tag": "nordics|us_west|us_east|us_midwest|us_south|germany|france|uk|benelux|apac|other",
-  
-  "decision_makers": [
-    {{
-      "role": "CFO|COO|VP Finance|Head of Procurement|CEO",
-      "detected": true|false,
-      "evidence": "What research says about this role",
-      "hiring_status": "actively_hiring|stable|recently_hired|unknown"
-    }}
-  ],
-  
-  "hiring_procurement": true|false,
-  "procurement_job_titles": ["relevant job titles found"],
-  "procurement_job_count": 0,
-  "hiring_signal_strength": "none|low|medium|high",
-  
-  "news_buying_trigger": true|false,
-  "news_buying_trigger_reason": "One sentence on strongest trigger",
-  "key_news_item": "Most relevant headline",
-  "funding_stage": "seed|series-a|series-b|series-c|growth|public|bootstrapped|unknown",
-  "last_funding_amount": "amount or unknown",
-  "last_funding_date": "date or unknown",
-  "estimated_employee_count": null,
-  "growth_signals": ["list of growth indicators"],
-  
-  "hard_filter_triggered": false,
-  "hard_filter_reason": "Which hard filter triggered, or 'None'",
-  "timing_multiplier": 1.0,
-  "timing_multiplier_reason": "Why this multiplier was chosen",
-  "raw_score": 0,
-  "icp_score": 0,
-  "icp_score_breakdown": {{
-    "no_procurement_tool": {{"score": 0, "reasoning": ""}},
-    "procurement_hiring": {{"score": 0, "reasoning": ""}},
-    "headcount_growth": {{"score": 0, "reasoning": ""}},
-    "recent_funding": {{"score": 0, "reasoning": ""}},
-    "finance_coo_hiring": {{"score": 0, "reasoning": ""}},
-    "global_regulated_complex": {{"score": 0, "reasoning": ""}}
-  }},
-  "icp_reasoning": "One paragraph explaining: (1) hard filter result, (2) signal strengths, (3) timing/urgency, and (4) why the final score is what it is",
-  "recommended_outreach_angle": "One sentence hook for an SDR"
-}}
-Return JSON only."""
-    raw, cost = kimi_web_search(system_prompt, user_prompt, max_tokens=2000)
+{RESPONSE_SCHEMA}"""
+    # Synthesis reasons over evidence the module searches already gathered, so
+    # the web search tool is deliberately withheld here. Attaching it let the
+    # model fire extra billable searches that were never needed.
+    raw, cost = kimi_web_search(
+        system_prompt, user_prompt, max_tokens=2000, use_web_search=False
+    )
     result = json.loads(raw)
     return result, cost
 
