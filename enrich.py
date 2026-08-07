@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from tabulate import tabulate
 from typing import Dict, List, Tuple, Any
 
+from scoring_rubric import build_scoring_rubric, RESPONSE_SCHEMA
+
 load_dotenv()
 
 CONNECTION_STRING = os.getenv("SUPABASE_CONNECTION_STRING")
@@ -307,109 +309,9 @@ Raw evidence from 5 research modules:
 
 Analyze this evidence and produce a comprehensive sales intelligence report using the THREE-LAYER scoring system below.
 
-═══════════════════════════════════════════════════════════════════
-LAYER 1 — HARD FILTERS (Binary Disqualifiers)
-═══════════════════════════════════════════════════════════════════
-If any trigger, the company is capped at 20/100.
+{build_scoring_rubric(weights)}
 
-Hard filters:
-1. Has SAP Ariba deployed → cap at 20 (deeply embedded, not worth pursuing)
-2. Under 200 employees → cap at 20 (too small for enterprise procurement motion)
-3. Government or non-profit → cap at 20
-
-NOT hard filters — route differently instead:
-- Zip detected → set competitive_routing = "zip", Tier 1 rip-and-replace opportunity, do NOT cap score
-- Coupa detected → set competitive_routing = "coupa", Tier 2 long play, apply 0.85x timing multiplier
-- No tool detected → set competitive_routing = "none", greenfield opportunity, score normally
-
-═══════════════════════════════════════════════════════════════════
-LAYER 2 — WEIGHTED SIGNALS (0-100 per signal)
-═══════════════════════════════════════════════════════════════════
-Use these exact weights:
-{json.dumps(weights, indent=2)}
-
-Compute: raw_score = sum(signal_score * weight / 100)
-
-Rules:
-- no_procurement_tool = POSITIVE for Omnea. No tool detected = high score (greenfield)
-- procurement_hiring = actively building the function = high score
-- headcount_growth = fast growth without procurement tooling = high score
-- recent_funding = fresh capital creates budget + scaling pressure = high score
-- finance_coo_hiring = new execs trigger tooling reviews = high score
-- global_regulated_complex = multi-jurisdiction / compliance = high score
-
-═══════════════════════════════════════════════════════════════════
-LAYER 3 — TIMING MULTIPLIER (0.7x to 1.3x)
-═══════════════════════════════════════════════════════════════════
-Apply AFTER raw_score to capture urgency:
-
-1.3x → New CFO or COO hired in last 6 months (new finance leader = tooling review)
-1.2x → Series B or C raised in last 12 months (fresh capital, scaling pressure)
-1.1x → Active procurement/ops hiring RIGHT NOW
-0.9x → No recent news, stable, no hiring signals (latent need, low urgency)
-0.7x → Layoffs or cost freeze signals (budget contraction)
-
-Compute: final_score = min(100, round(raw_score * timing_multiplier))
-If hard_filter_triggered: final_score = min(20, final_score)
-
-═══════════════════════════════════════════════════════════════════
-
-Return STRICT JSON:
-
-{{
-  "description": "One sentence on what the company does",
-  "target_customer": "SMB|mid-market|enterprise|mixed",
-  "pain_points": ["up to 5 business problems"],
-  "tech_mentions": ["technologies mentioned"],
-  "complexity_signals": ["signals of operational complexity"],
-  
-  "procurement_stack_detected": ["specific tools detected or empty list"],
-  "procurement_maturity": "none|ad-hoc|emerging|mature",
-  "competitive_risk": "None detected|Using [tool]|Mature procurement function",
-  "competitive_routing": "none|zip|coupa|ariba",
-  "territory_tag": "nordics|us_west|us_east|us_midwest|us_south|germany|france|uk|benelux|apac|other",
-  
-  "decision_makers": [
-    {{
-      "role": "CFO|COO|VP Finance|Head of Procurement|CEO",
-      "detected": true|false,
-      "evidence": "What research says about this role",
-      "hiring_status": "actively_hiring|stable|recently_hired|unknown"
-    }}
-  ],
-  
-  "hiring_procurement": true|false,
-  "procurement_job_titles": ["relevant job titles found"],
-  "procurement_job_count": 0,
-  "hiring_signal_strength": "none|low|medium|high",
-  
-  "news_buying_trigger": true|false,
-  "news_buying_trigger_reason": "One sentence on strongest trigger",
-  "key_news_item": "Most relevant headline",
-  "funding_stage": "seed|series-a|series-b|series-c|growth|public|bootstrapped|unknown",
-  "last_funding_amount": "amount or unknown",
-  "last_funding_date": "date or unknown",
-  "estimated_employee_count": null,
-  "growth_signals": ["list of growth indicators"],
-  
-  "hard_filter_triggered": false,
-  "hard_filter_reason": "Which hard filter triggered, or 'None'",
-  "timing_multiplier": 1.0,
-  "timing_multiplier_reason": "Why this multiplier was chosen",
-  "raw_score": 0,
-  "icp_score": 0,
-  "icp_score_breakdown": {{
-    "no_procurement_tool": {{"score": 0, "reasoning": ""}},
-    "procurement_hiring": {{"score": 0, "reasoning": ""}},
-    "headcount_growth": {{"score": 0, "reasoning": ""}},
-    "recent_funding": {{"score": 0, "reasoning": ""}},
-    "finance_coo_hiring": {{"score": 0, "reasoning": ""}},
-    "global_regulated_complex": {{"score": 0, "reasoning": ""}}
-  }},
-  "icp_reasoning": "One paragraph explaining: (1) hard filter result, (2) signal strengths, (3) timing/urgency, and (4) why the final score is what it is",
-  "recommended_outreach_angle": "One sentence hook for an SDR"
-}}
-Return JSON only."""
+{RESPONSE_SCHEMA}"""
     # Synthesis reasons over evidence the module searches already gathered, so
     # the web search tool is deliberately withheld here. Attaching it let the
     # model fire extra billable searches that were never needed.
