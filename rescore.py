@@ -1,8 +1,14 @@
 """
 rescore.py
 Re-score enriched companies using stored raw_evidence.
-No web searches — uses existing data with updated scoring logic.
-Optionally fetches territory_tag via a single lightweight Kimi call.
+
+The rescore itself makes no research searches — it replays evidence already in
+the database through the current scoring rubric, so it is cheap to run
+repeatedly while iterating on the model.
+
+Territory backfill is opt-in via fetch_territory=True and is NOT free: it calls
+Kimi with the web search tool attached, costing one search per company that
+lacks a tag. It defaults to False so that the zero-cost path stays the default.
 """
 
 import os
@@ -234,7 +240,7 @@ Apply the THREE-LAYER scoring system:
     return result, 0.0  # No search cost
 
 
-def run_rescore(fetch_territory: bool = True):
+def run_rescore(fetch_territory: bool = False):
     conn = get_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
@@ -397,4 +403,6 @@ def run_rescore(fetch_territory: bool = True):
 
 
 if __name__ == "__main__":
-    run_rescore(fetch_territory=True)
+    # Territory backfill costs one web search per untagged company. Flip to
+    # True when you want it; the default keeps a rescore free.
+    run_rescore(fetch_territory=False)

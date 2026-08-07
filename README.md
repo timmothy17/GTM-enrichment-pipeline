@@ -22,7 +22,7 @@ flowchart TD
     ENR -->|1 synthesis call, no search| SYN[3-layer score]
     SYN -->|raw_evidence JSONB<br/>+ 22 scored columns| DB
     DB --> RES[rescore.py]
-    RES -->|replays stored evidence<br/>no web search| DB
+    RES -->|replays stored evidence<br/>no research searches| DB
     DB --> SYNC[hubspot_sync.py]
     SYNC -->|version-gated upsert| HS[HubSpot CRM]
     WH[post_call_webhook.py] --> CI[conversation_intelligence_demo.py]
@@ -39,7 +39,7 @@ Postgres is the source of truth. Raw research evidence is stored as JSONB alongs
 | --- | --- |
 | `ingest.py` | CSV to Postgres. Normalises names and domains, dedupes companies by domain and contacts by email or name. |
 | `enrich.py` | The expensive path. Five search modules per company, then one synthesis call producing the score. |
-| `rescore.py` | Replays stored `raw_evidence` through the current scoring prompt. No web searches. Optionally backfills `territory_tag`. |
+| `rescore.py` | Replays stored `raw_evidence` through the current scoring prompt. No research searches. Territory backfill is opt-in and does cost one search per company that lacks a tag. |
 | `hubspot_sync.py` | Version-gated upsert into HubSpot, matching on domain to avoid duplicates. |
 | `conversation_intelligence_demo.py` | End-to-end call analysis against a synthetic transcript. Also holds the functions the webhook imports. |
 | `post_call_webhook.py` | Flask entry point. Granola or Gong posts a finished call; runs the immediate tier and stores the record. |
@@ -135,7 +135,7 @@ The scripts were built and validated locally first. Deploying half-working logic
 
 ## Design decisions
 
-**Storing raw evidence rather than just scores.** The alternative was keeping only the final scored columns and re-running research whenever the model changed. Storing the full evidence blob as JSONB costs a column and makes `rescore.py` possible: iterate on the scoring prompt across the whole table at zero search cost. Research is roughly 95% of per-company cost and the scoring model is the part most likely to change, so this is the decision that makes the system maintainable. I would make it again without hesitating.
+**Storing raw evidence rather than just scores.** The alternative was keeping only the final scored columns and re-running research whenever the model changed. Storing the full evidence blob as JSONB costs a column and makes `rescore.py` possible: iterate on the scoring prompt across the whole table without paying for the research again. Research is roughly 95% of per-company cost and the scoring model is the part most likely to change, so this is the decision that makes the system maintainable. I would make it again without hesitating.
 
 **Prompt-enforced JSON rather than a schema.** The alternative was a JSON Schema or Pydantic model with `response_format` set and validation errors fed back for repair. What is implemented is a literal JSON template in the prompt, an instruction to return JSON only, fence stripping, `json.loads`, and `.get()` with defaults on the way to the database. This won on iteration speed during a short build, and worked well enough that the cost stayed invisible. It is the weakest decision in the codebase. The honest reason it survives is that fixing it properly means moving the scoring arithmetic into Python at the same time, which was out of scope for the build window rather than technically hard.
 
@@ -311,7 +311,7 @@ python hubspot_sync.py  # push changed records to HubSpot
 
 `enrich.py` defaults to a batch of two companies so a first run is cheap to observe. Each company costs roughly five cents on the estimate described under limitations, and takes a few minutes because of the 20 rpm client-side limit. Raise `batch_size` in `__main__` once you have watched a batch complete.
 
-`rescore.py` processes every enriched company and makes no web searches, so it is safe to run repeatedly while iterating on the scoring prompt. Note that it increments `enrichment_version` each time.
+`rescore.py` replays stored evidence with no research searches, so it is cheap to run repeatedly while iterating on the scoring prompt. Territory backfill is opt-in via `fetch_territory=True` and does cost one search per company that lacks a tag. Note that it increments `enrichment_version` each time.
 
 For the conversation module:
 
